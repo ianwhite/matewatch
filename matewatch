@@ -19,6 +19,7 @@ module Matewatch
         [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
         [ '--require-frontmost', '-r', GetoptLong::NO_ARGUMENT],
         [ '--verbose', '-v', GetoptLong::NO_ARGUMENT ],
+        [ '--debug', GetoptLong::NO_ARGUMENT ],
         [ '--hourly', GetoptLong::NO_ARGUMENT ],
         [ '--session', GetoptLong::NO_ARGUMENT ],
         [ '--from', '-f', GetoptLong::REQUIRED_ARGUMENT],
@@ -38,6 +39,7 @@ module Matewatch
         when '--poll'     then @poll = arg.to_i
         when '--hourly'   then @type = 'hourly'
         when '--session'  then @type = 'session'
+        when '--debug'    then @debug = true
         end
       end
 
@@ -47,7 +49,7 @@ module Matewatch
       
         save_and_exit = lambda do
           @logger.info "\nCleaning up"
-          @mw.stop_all          
+          @mw.shutdown          
           exit
         end
         ['SIGUSR1', 'SIGUSR2', 'SIGTERM', 'SIGINT'].each {|sig| trap sig, save_and_exit}
@@ -103,31 +105,36 @@ module Matewatch
           puts help_msg       
         end
 
-      #rescue
-      #  exit_with_msg($!)
+      rescue Exception => e
+        @debug ? (raise e) : exit_with_msg($!)
       end
     end
 
     def help_msg
       <<-end_str
-    
+  
+matewatch watches textmate and logs how long you are working on files in spec-
+ified directories
+
+USAGE
+
   matewatch COMMAND [OPTIONS]
   
   matewatch start
     Starts the project watcher
     
-    --verbose           -v            show output
-    --require-frontmost -r            require that textmate be at front to
-                                      log time data
-    --poll=<n>          -p <n>        poll every (n) seconds
+    --verbose               -v            show output
+    --poll=<n>              -p <n>        poll every (n) seconds
+    --require-frontmost     -r            require that textmate be frontmost
+                                          application to log time data
     
   matewatch report [<name>]
     Show brief report of hours/minutes per day
 
-    --hourly OR --session             show hourly/session report
-    --from=<date>       -f <date>     from specified date
-    --to=<date>         -t <date>     to specified date
-    --day=<date>        -d <date>     for specified date
+    --hourly  OR  --session               show hourly/session report
+    --from=<date>           -f <date>     from specified date
+    --to=<date>             -t <date>     to specified date
+    --day=<date>            -d <date>     for specified date
 
   matewatch list
     List projects being watched
@@ -136,15 +143,19 @@ module Matewatch
     Add a project to the watch list
     
   matewatch remove <name>
-    Remove a project from the watch list (no undo)
+    Remove a project from the watch list.  Copies the project data to
+    a timestamped backup in #{Matewatch.data_dir}
     
   matewatch move <name> <position>
     Move a project up or down the list
 
+DATA
+
   If you want to get at the session data for your projects, you'll find them
-  in ~/.matewatch.  The files are YAML format, and so are easily editable/ex-
-  portable.
+  in #{Matewatch.data_dir}.
   
+  The files are YAML format, and so are easily editable/exportable.
+
     by Argument from Design (c) 2007 <http://www.ardes.com> (MIT License)
   
     end_str
@@ -236,7 +247,7 @@ module Matewatch
     attr_writer :logger
     
     def self.load(name)
-      YAML.load_file(Matewatch.data_dir + "/#{name}.yml")
+      YAML.load_file(Matewatch.data_dir + "/#{name}.yml") rescue nil
     end
     
     def initialize(name, path)
@@ -283,6 +294,7 @@ module Matewatch
       return "\nNo session data exists\n" if timer.intervals.length == 0
       from ||= timer.intervals.first.first
       to   ||= Time.now
+      from, to = from.beginning_of_day, to.end_of_day
       day, days = from, []
       while day < to
         days << day_report(day, type) if timer.day_total(day) > 0
@@ -294,6 +306,15 @@ module Matewatch
     def save
       `mkdir -p #{Matewatch.data_dir}`
       File.open(Matewatch.data_dir + "/#{name}.yml", 'w+') {|f| f << to_yaml}
+    end
+    
+    # destory the yml file, first saving self to filename if specified
+    def destroy(filename = nil)
+      if filename
+        File.open(Matewatch.data_dir + "/#{filename}.yml", 'w+') {|f| f << to_yaml}
+        puts "project #{name} archived to #{Matewatch.data_dir}/#{filename}.yml"
+      end
+      `rm -f #{Matewatch.data_dir + "/#{name}.yml"}`
     end
     
     def to_yaml_properties
@@ -373,19 +394,20 @@ module Matewatch
       raise "#{name} is not being watched" unless p = project(name)
       returning projects.delete(p) do |p|
         save_projects
+        p.destroy(p.name + '_' + Time.now.strftime("%Y%m%d_%H%M"))
       end
     end
   
     def watch(poll = 1)
       pid = File.read("#{Matewatch.data_dir}/pid") rescue nil
-      raise "Another matwatch appears to be running (pid: #{pid})\nIf it's not then remove #{Matewatch.data_dir}/pid." if pid && pid.to_i != Process.pid
+      raise "Another matewatch appears to be running (pid: #{pid})\nif not then remove #{Matewatch.data_dir}/pid." if pid
       File.open("#{Matewatch.data_dir}/pid", 'w+') {|f| f << Process.pid }
       
       poll = 1 if poll.to_i < 1
       i, textmate_gone = 0, false
       
-      logger.info "poll: #{poll} seconds, require frontmost: #{@require_frontmost ? 'true' : 'false'}\n"
-      logger.info "Press CTRL-C to shutdown\n"
+      logger.info "=== poll: #{poll} seconds, require frontmost: #{@require_frontmost ? 'true' : 'false'}\n"
+      logger.info "=== press CTRL-c, or type kill #{Process.pid}, to shutdown\n"
       
       loop do
         load_projects
@@ -393,10 +415,10 @@ module Matewatch
         begin
           raise 'tm went away' if @require_frontmost && !@textmate.frontmost?
           active = find_active_project
-          logger.info "#{Time.now}: Textmate came back" if textmate_gone
+          logger.info "+++ Textmate active at #{Time.now}" if textmate_gone
           textmate_gone = false
         rescue RuntimeError
-          logger.info "#{Time.now}: Textmate went away" unless textmate_gone
+          logger.info "--- Textmate inactive at #{Time.now}" unless textmate_gone
           textmate_gone = true
         end
       
@@ -411,7 +433,7 @@ module Matewatch
       end
     end
     
-    def stop_all
+    def shutdown
       @projects.each(&:stop)
       `rm -f #{Matewatch.data_dir}/pid`
     end
@@ -426,9 +448,10 @@ module Matewatch
       project_names = [] unless project_names.is_a?(Array)
       unless project_names == @projects.collect(&:name)
         @projects = project_names.collect {|p| p = Project.load(p)}
-        @projects.reject!(&:nil?)
+        @projects.reject! {|p| !p.is_a?(Project) }
         @projects.each {|p| p.logger = logger}
-        logger.info "matewatching: #{projects.collect(&:name).to_sentence}"
+        logger.info "=== matewatching: #{projects.collect(&:name).to_sentence}"
+        save_projects
       end
     end
     
