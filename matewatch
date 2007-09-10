@@ -274,10 +274,6 @@ DATA
       end
     end
     
-    def total(from = nil, to = nil)
-      humanize(timer.total(from, to))
-    end
-
     def day_report(day = nil, type = nil)
       day = day.to_time rescue Time.now
       out = " - #{day.strftime('%d/%b/%y')}  #{humanize(timer.day_total(day))}"
@@ -300,7 +296,8 @@ DATA
         days << day_report(day, type) if timer.day_total(day) > 0
         day += 1.day
       end
-      days.join("\n") + "\n ----- TOTAL: #{total(from, to)}\n"
+      total = timer.total(from, to)
+      days.join("\n") + "\n ----- TOTAL: #{humanize(total)} [#{humanize_words(total, 15)}]\n"
     end
 
     def save
@@ -328,7 +325,14 @@ DATA
       hours, mins, secs = seconds / 1.hour, (seconds % 1.hour) / 1.minute, seconds%60
       sprintf("%3d:%02d:%02d", hours, mins, secs)
     end
-
+    
+    def humanize_words(seconds, nearest = 1)
+      mins = seconds.to_i / 1.minute
+      mins += (nearest - mins%nearest) unless mins%nearest == 0
+      hours, mins = mins/1.hour, mins%1.hour
+      "#{hours} hour#{'s' if hours != 1}, #{mins} minute#{'s' if mins != 1} (in #{nearest} min blocks)"
+    end
+    
     def day_hourly_report(day = nil)
       hours = []
       (0..23).to_a.each do |hour|
