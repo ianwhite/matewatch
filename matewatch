@@ -46,13 +46,11 @@ module Matewatch
         @mw = Watcher.new :logger => @logger, :require_frontmost => @require_frontmost
       
         save_and_exit = lambda do
-          @logger.info "\nSaving"
-          @mw.stop_all
+          @logger.info "\nCleaning up"
+          @mw.stop_all          
           exit
         end
-    
-        trap 'TERM', save_and_exit
-        trap 'INT', save_and_exit
+        ['SIGUSR1', 'SIGUSR2', 'SIGTERM', 'SIGINT'].each {|sig| trap sig, save_and_exit}
   
         case command = ARGV.shift
         when 'start'
@@ -76,8 +74,9 @@ module Matewatch
           end  
                     
         when 'list'
-          printf("\n %-20s  %s\n\n", 'NAME', 'PATH')
-          @mw.projects.each{|p| printf(" %-20s  %s\n", p.name, p.path)}
+          printf("\n     %-20s  %s\n\n", 'NAME', 'PATH')
+          idx = 0
+          @mw.projects.each{|p| printf(" %2d. %-20s  %s\n", idx += 1, p.name, p.path)}
           puts
     
         when 'add'
@@ -89,8 +88,7 @@ module Matewatch
           puts "project #{project.name} #{project.path} added"
   
         when 'remove'
-          usage = "Eh? matewatch remove <name>"
-          @name = ARGV.shift || exit_with_msg(@name)
+          @name = ARGV.shift || exit_with_msg("Eh? matewatch remove <name>")
           project = @mw.remove_project(@name)
           puts "project #{project.name} removed"
   
@@ -101,15 +99,12 @@ module Matewatch
           project = @mw.move_project(@name, @pos)
           puts "project #{project.name} moved"
   
-        when 'test'
-          Tests.run
-          
         else
           puts help_msg       
         end
 
-      rescue
-        exit_with_msg($!)
+      #rescue
+      #  exit_with_msg($!)
       end
     end
 
@@ -130,7 +125,6 @@ module Matewatch
     Show brief report of hours/minutes per day
 
     --hourly OR --session             show hourly/session report
-    --project=<name>    -p <name>     only report/total for <name>
     --from=<date>       -f <date>     from specified date
     --to=<date>         -t <date>     to specified date
     --day=<date>        -d <date>     for specified date
@@ -149,8 +143,7 @@ module Matewatch
 
   If you want to get at the session data for your projects, you'll find them
   in ~/.matewatch.  The files are YAML format, and so are easily editable/ex-
-  portable.  matewatch has a builtin test suite which you can invoke with the
-  command 'matewatch test'.
+  portable.
   
     by Argument from Design (c) 2007 <http://www.ardes.com> (MIT License)
   
@@ -319,7 +312,7 @@ module Matewatch
       hours = []
       (0..23).to_a.each do |hour|
         if (ht = timer.hour_total(hour, day)) > 0
-          hours << sprintf("     %2d00-%-2d00  %s", hour, (hour+1)%24, humanize(ht))
+          hours << sprintf("   %2d00-%02d00  %s", hour, (hour+1)%24, humanize(ht))
         end
       end
       hours.join("\n")
@@ -329,7 +322,7 @@ module Matewatch
       day = day.to_time rescue Time.now
       idx = 0
       items = timer.intervals(day.beginning_of_day, day.end_of_day + 1).collect do |start, stop|
-        sprintf "    %2d.  %s-%s  %s", idx+=1, start.strftime("%H:%M"), stop.strftime("%H:%M"), humanize(stop-start)
+        sprintf "   %2d.  %s-%s  %s", idx+=1, start.strftime("%H:%M"), stop.strftime("%H:%M"), humanize(stop-start)
       end
       items.join("\n")
     end
@@ -343,11 +336,8 @@ module Matewatch
       @textmate = OSA::app("Textmate")
       @require_frontmost = options[:require_frontmost]
       @logger = options[:logger]
-      
-      project_names = YAML.load_file("#{Matewatch.data_dir}/.projects.yml") rescue []
-      @projects = project_names.collect {|p| p = Project.load(p)}
-      @projects.reject!(&:nil?)
-      @projects.each {|p| p.logger = logger}
+      @projects = []
+      load_projects
     end
   
     def logger
@@ -371,6 +361,9 @@ module Matewatch
     def move_project(name, pos)
       raise "#{name} is not being watched" unless p = project(name)
       returning projects.delete(p) do |p|
+        pos -= 1
+        pos = 0 if pos < 0
+        pos = projects.length if pos > projects.length
         projects.insert(pos, p)
         save_projects
       end
@@ -386,13 +379,16 @@ module Matewatch
     def watch(poll = 1)
       poll = 1 if poll.to_i < 1
       i, textmate_gone = 0, false
-    
-      logger.info "matewatching: #{projects.collect(&:name).to_sentence}\npoll: #{poll} seconds, require frontmost: #{@require_frontmost ? 'true' : 'false'}\n"
+      
+      logger.info "poll: #{poll} seconds, require frontmost: #{@require_frontmost ? 'true' : 'false'}\n"
+      logger.info "Press CTRL-C to shutdown\n"
       
       loop do
+        load_projects
+        
         begin
           raise 'tm went away' if @require_frontmost && !@textmate.frontmost?
-          active = active_now
+          active = find_active_project
           logger.info "#{Time.now}: Textmate came back" if textmate_gone
           textmate_gone = false
         rescue RuntimeError
@@ -420,240 +416,22 @@ module Matewatch
       File.open("#{Matewatch.data_dir}/.projects.yml", 'w+') {|f| f << @projects.collect(&:name).to_yaml}
     end
     
+    def load_projects
+      project_names = YAML.load_file("#{Matewatch.data_dir}/.projects.yml") rescue nil
+      project_names = [] unless project_names.is_a?(Array)
+      unless project_names == @projects.collect(&:name)
+        @projects = project_names.collect {|p| p = Project.load(p)}
+        @projects.reject!(&:nil?)
+        @projects.each {|p| p.logger = logger}
+        logger.info "matewatching: #{projects.collect(&:name).to_sentence}"
+      end
+    end
+    
     # return the active document
-    def active_now
+    def find_active_project
       if @textmate.documents.first
         active_path = @textmate.documents.first.path
         @projects.find {|p| active_path =~ /^#{p.path}/}
-      end
-    end
-  end
-
-  # there's a bit module magicky stuff, the purpose of which is to avoid
-  # loading the test suite before it's needed.
-  #
-  # Summary: any modules that end in Test in this module will be included
-  # into anonymous TestCase classes which will be added to the suite
-  module Tests
-    class<<self
-      def run
-        require 'test/unit/testcase'
-        require 'test/unit/testsuite'
-        require 'test/unit/ui/console/testrunner'
-        setup_tests
-        
-        # change data dir for tests
-        class<<Matewatch
-          def data_dir
-            File.expand_path("~/.matewatch/.test")
-          end
-        end
-        `mkdir -p #{Matewatch.data_dir}`
-        
-        Test::Unit::UI::Console::TestRunner.run(Matewatch::Tests)   
-      end
-      
-      def suite
-        suite = Test::Unit::TestSuite.new('Matewatch::Tests')
-        @tests.each {|t| suite << t.suite}
-        suite
-      end
-    
-      def setup_tests
-        @tests = []
-        constants.select{|c| c =~ /Test$/}.each do |test_module|
-          test = Class.new(Test::Unit::TestCase)
-          test.send :include, eval(test_module)
-          @tests << test
-        end
-      end 
-    end
-    
-    module TimerTest
-      def setup
-        @timer = Timer.new
-      end
-
-      def test_intervals
-        assert_equal [], @timer.intervals
-        assert_equal [], @timer.intervals(Time.now)
-        assert_equal [], @timer.intervals(nil, Time.now)
-        assert_equal [], @timer.intervals(Time.now - 10000, Time.now)
-      end
-      
-      def test_total_seconds
-        assert_equal 0, @timer.total
-        assert_equal 0, @timer.total(Time.now)
-        assert_equal 0, @timer.total(nil, Time.now)
-        assert_equal 0, @timer.total(Time.now - 10000, Time.now)
-      end
-      
-      def test_start_should_set_started_at
-        @timer.start
-        started_at = @timer.instance_variable_get('@started_at')
-        assert started_at.is_a?(Time)
-      end
-      
-      def test_start_twice_should_do_nothing
-        @timer.start
-        started_at = @timer.instance_variable_get('@started_at')
-        sleep(0.1)
-        @timer.start
-        assert_equal started_at, @timer.instance_variable_get('@started_at')
-      end
-      
-      def test_stop_without_start_should_do_nothing
-        @timer.stop
-        assert_equal [], @timer.intervals
-      end
-      
-      def test_start_then_stop_should_create_interval
-        @timer.start
-        started_at = @timer.instance_variable_get('@started_at')
-        sleep(0.1)
-        @timer.stop
-        assert_equal started_at, @timer.intervals.last.first
-        assert @timer.intervals.last.last > started_at
-      end
-      
-      def test_intervals_should_include_started_session
-        @timer.start
-        started_at = @timer.instance_variable_get('@started_at')
-        interval = @timer.intervals.first
-        assert_equal started_at, interval.first
-        assert interval.last.is_a?(Time)
-        assert interval.last > started_at
-      end
-    end
-    
-    module TimerDataSetup
-      def setup_timer
-        @s1_start = Time.parse('2007/01/01 09:55')
-        @s1_stop  = Time.parse('2007/01/01 10:05')
-        @s2_start = Time.parse('2007/01/01 23:55')
-        @s2_stop  = Time.parse('2007/01/02 00:05')
-        @s3_start = Time.parse('2007/01/02 10:55')
-        @s3_stop  = Time.parse('2007/01/02 12:05')
-        @timer = Timer.new
-        @timer.instance_variable_set('@intervals', [[@s1_start, @s1_stop], [@s2_start, @s2_stop], [@s3_start, @s3_stop]])
-      end
-    end
-    
-    module TimerWithDataTest
-      include TimerDataSetup
-      
-      def setup
-        setup_timer
-      end
-      
-      def test_intervals_total_no_args
-        assert_equal [[@s1_start, @s1_stop], [@s2_start, @s2_stop], [@s3_start, @s3_stop]], @timer.intervals
-        assert_equal 90.minutes, @timer.total
-      end
-
-      def test_before_s1_to_after_s1
-        assert_equal [[@s1_start, @s1_stop]], @timer.intervals(@s1_start-5, @s1_stop+5)
-        assert_equal 10.minutes, @timer.total(@s1_start-5, @s1_stop+5)
-      end
-            
-      def test_from_s1_to_after_s1
-        assert_equal [[@s1_start, @s1_stop]], @timer.intervals(@s1_start, @s1_stop+5)
-        assert_equal 10.minutes, @timer.total(@s1_start, @s1_stop+5)
-      end
-      
-      def test_from_after_s1_start_to_after_s1
-        assert_equal [[@s1_start+5, @s1_stop]], @timer.intervals(@s1_start+5, @s1_stop+5)
-        assert_equal 10.minutes - 5.seconds, @timer.total(@s1_start+5, @s1_stop+5)
-      end
-
-      def test_from_after_s1_start_to_before_s1_stop
-        assert_equal [[@s1_start+5, @s1_stop-5]], @timer.intervals(@s1_start+5, @s1_stop-5)
-        assert_equal 10.minutes - 10.seconds, @timer.total(@s1_start+5, @s1_stop-5)
-      end
-      
-      def test_from_after_s1_start_to_after_s2_start
-        assert_equal [[@s1_start+5, @s1_stop], [@s2_start, @s2_start+20]], @timer.intervals(@s1_start+5, @s2_start+20)
-        assert_equal 10.minutes + 15.seconds, @timer.total(@s1_start+5, @s2_start+20)
-      end
-
-      def test_day_total
-        assert_equal 15.minutes, @timer.day_total('2007/01/01')
-        assert_equal 75.minutes, @timer.day_total('2007/01/02')
-      end
-      
-      def test_hour_total
-        assert_equal 5.minutes, @timer.hour_total(9, '2007/01/01')
-        assert_equal 5.minutes, @timer.hour_total(10, '2007/01/01')
-        assert_equal 0, @timer.hour_total(11, '2007/01/01')
-        assert_equal 5.minutes, @timer.hour_total(23, '2007/01/01')
-        assert_equal 5.minutes, @timer.hour_total(0, '2007/01/02')
-        assert_equal 0, @timer.hour_total(1, '2007/01/02')
-      end
-    end
-    
-    module ProjectTest
-      include TimerDataSetup
-      
-      def setup
-        setup_timer
-        `rm -f #{Matewatch.data_dir}/test.yml`
-        @project = Project.new('test', '/path')
-        @project.logger = Logger.new(false)
-        @project.instance_variable_set('@timer', @timer)
-      end
-      
-      def test_save_on_start
-        @project.start
-        yaml = YAML.load_file("#{Matewatch.data_dir}/test.yml")
-        assert_equal @project.timer.instance_variable_get('@intervals'), yaml.timer.instance_variable_get('@intervals')
-        assert_equal @project.timer.instance_variable_get('@started_at'), yaml.timer.instance_variable_get('@started_at')
-        assert_equal @project.name, yaml.name
-        assert_equal @project.path, yaml.path
-      end
-      
-      def test_intervals_total_no_args
-        assert_equal "1 hour, 30 minutes", @project.total
-      end
-
-      def test_before_s1_to_after_s1
-        assert_equal "10 minutes", @project.total(@s1_start-5, @s1_stop+5)
-      end
-            
-      def test_from_s1_to_after_s1
-        assert_equal "10 minutes", @project.total(@s1_start, @s1_stop+5)
-      end
-      
-      def test_from_after_s1_start_to_after_s1
-        assert_equal "10 minutes", @project.total(@s1_start+5, @s1_stop+5)
-      end
-
-      def test_from_after_s1_start_to_before_s1_stop
-        assert_equal "10 minutes", @project.total(@s1_start+5, @s1_stop-5)
-      end
-      
-      def test_from_after_s1_start_to_after_s2_start
-        assert_equal "11 minutes", @project.total(@s1_start+5, @s2_start+20)
-      end
-      
-      def test_day_report
-        assert_equal " - 01/Jan/07  15 minutes", @project.day_report('2007/01/01')
-        assert_equal " - 01/Jan/07  15 minutes\n      9-10  5 minutes\n     10-11  5 minutes\n     23-24  5 minutes\n", 
-          @project.day_report('2007/01/01', 'hourly')
-        assert_equal " - 02/Jan/07  1 hour, 15 minutes\n      0-1   5 minutes\n     10-11  5 minutes\n     11-12  1 hour\n     12-13  5 minutes\n", 
-          @project.day_report('2007/01/02', 'hourly')
-        assert_equal " - 01/Jan/07  15 minutes\n     1.  09:55-10:05  10 minutes\n     2.  23:55-00:00  5 minutes\n", 
-          @project.day_report('2007/01/01', 'session')
-        assert_equal " - 02/Jan/07  1 hour, 15 minutes\n     1.  00:00-00:05  5 minutes\n     2.  10:55-12:05  1 hour, 10 minutes\n", 
-          @project.day_report('2007/01/02', 'session')
-      end
-      
-      def test_report
-        assert_equal " - 01/Jan/07  15 minutes\n - 02/Jan/07  1 hour, 15 minutes\n TOTAL: 1 hour, 30 minutes\n",
-          @project.report
-        assert_equal " - 01/Jan/07  15 minutes\n     1.  09:55-10:05  10 minutes\n     2.  23:55-00:00  5 minutes\n\n - 02/Jan/07  1 hour, 15 minutes\n     1.  00:00-00:05  5 minutes\n     2.  10:55-12:05  1 hour, 10 minutes\n\n TOTAL: 1 hour, 30 minutes\n",
-           @project.report(nil, nil, 'session')
-        assert_equal " - 01/Jan/07  15 minutes\n      9-10  5 minutes\n     10-11  5 minutes\n     23-24  5 minutes\n\n - 02/Jan/07  1 hour, 15 minutes\n      0-1   5 minutes\n     10-11  5 minutes\n     11-12  1 hour\n     12-13  5 minutes\n\n TOTAL: 1 hour, 30 minutes\n",
-          @project.report(nil, nil, 'hourly')
       end
     end
   end
