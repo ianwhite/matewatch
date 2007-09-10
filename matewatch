@@ -377,6 +377,10 @@ module Matewatch
     end
   
     def watch(poll = 1)
+      pid = File.read("#{Matewatch.data_dir}/pid") rescue nil
+      raise "Another matwatch appears to be running (pid: #{pid})\nIf it's not then remove #{Matewatch.data_dir}/pid." if pid && pid.to_i != Process.pid
+      File.open("#{Matewatch.data_dir}/pid", 'w+') {|f| f << Process.pid }
+      
       poll = 1 if poll.to_i < 1
       i, textmate_gone = 0, false
       
@@ -409,6 +413,7 @@ module Matewatch
     
     def stop_all
       @projects.each(&:stop)
+      `rm -f #{Matewatch.data_dir}/pid`
     end
   
   protected
