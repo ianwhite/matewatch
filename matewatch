@@ -80,13 +80,13 @@ class Matewatch
       @name = @args.shift || exit_with_msg(usage)
       @path = @args.shift || exit_with_msg(usage)
       @pos  = @args.first ? @args.shift.to_i : nil
-      project = @mw.add_project(@name, @path, @pos)
+      project = @watcher.add_project(@name, @path, @pos)
       puts "project #{project.name} #{project.path} added"
     end
 
     def remove
       @name = @args.shift || exit_with_msg("Eh? matewatch remove <name>")
-      project = @mw.remove_project(@name)
+      project = @watcher.remove_project(@name)
       puts "project #{project.name} removed"
     end
   
@@ -94,7 +94,7 @@ class Matewatch
       usage = "Eh? matewatch move <name> <position>"
       @name = @args.shift || exit_with_msg(usage)
       @pos  = (@args.first ? @args.shift.to_i : nil) || exit_with_msg(usage)
-      project = @mw.move_project(@name, @pos)
+      project = @watcher.move_project(@name, @pos)
       puts "project #{project.name} moved"
     end
   end
