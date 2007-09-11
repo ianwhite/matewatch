@@ -180,7 +180,8 @@ protected
       end
     else
       puts "\nIf you install sleepwatcher http://www.bernhard-baehr.de/sleepwatcher_2.0.4.dmg"
-      puts "then matewatch will pause timers when going to sleep\n\n"
+      puts "then matewatch will pause timers when going to sleep.  You only need to install the"
+      puts "sleepwatcher command line tool, no need for the startup item.\n\n"
     end
   end
   
