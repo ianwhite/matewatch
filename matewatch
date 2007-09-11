@@ -213,7 +213,7 @@ DATA
       return [] unless intervals_beginning
       
       from ||= intervals_beginning
-      to   ||= intervals_end
+      to   ||= Time.now.beginning_of_next_day
       intervals = []
     
       @intervals.each do |start, stop|
@@ -230,7 +230,7 @@ DATA
         intervals.push([start, stop])
       end
       
-      if @started_at && to >= intervals_end
+      if @started_at && @started_at < to && to == Time.now.beginning_of_next_day
         intervals.push([@started_at, Time.now])
       end
       
