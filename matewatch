@@ -10,6 +10,7 @@ rescue LoadError
 end
 
 class Matewatch
+  SLEEPWATCHER = "/usr/local/sbin/sleepwatcher" # optional
   DATA_DIR = File.expand_path("~/.matewatch")
   START = 'USR1'
   PAUSE = 'USR2'
@@ -29,6 +30,7 @@ class Matewatch
         end
       else
         write_pid
+        sleepwatch
         @watcher.watch(@poll || 5)
       end
     end
@@ -156,9 +158,17 @@ protected
     @logger = Logger.new(@verbose)
     @watcher = Watcher.new :logger => @logger, :require_frontmost => @require_frontmost
 
+    if File.exist?(SLEEPWATCHER)
+      @sleepwatcher = SLEEPWATCHER
+    else
+      puts "\nIf you install sleepwatcher http://www.bernhard-baehr.de/sleepwatcher_2.0.4.dmg"
+      puts "then matewatch will pause timers when going to sleep\n\n"
+    end
+    
     save_and_exit = lambda do
       @logger.info "\nCleaning up"
-      @watcher.shutdown          
+      @watcher.shutdown
+      Process.detach(@sleepwatcher_pid) if @sleepwatcher_pid       
       exit
     end
   
@@ -169,6 +179,15 @@ protected
     trap START, lambda{ @watcher.start }
   end
 
+  def sleepwatch
+    if @sleepwatcher
+      @sleepwatcher_pid = Process.fork do
+        @logger.info "\nsleepwacthing: #{@sleepwatcher} -s 'kill -s #{PAUSE} #{pid}' -w 'kill -w #{START} #{pid}'\n\n"
+        system "#{@sleepwatcher} -s 'kill -s #{PAUSE} #{pid}' -w 'kill -s #{START} #{pid}'"
+      end
+    end
+  end
+  
   def pid
     unless @pid
       pid = File.read("#{Matewatch.data_dir}/pid") rescue nil
@@ -220,8 +239,7 @@ USAGE
     Move a project up or down the list
 
   matewatch pause
-    Will pause the current matewatcher, use matewatch start to start it
-    again
+    Will pause the current matewatcher, 'matewatch start' will restart it
 
 DATA
 
