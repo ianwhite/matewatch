@@ -198,14 +198,22 @@ DATA
       end
     end
   
+    def intervals_beginning
+      @intervals.first && @intervals.first.first
+    end
+    
+    def intervals_end
+      @intervals.last && @intervals.last.last
+    end
+    
     # return array of [start, stop] intervals which include the
     # specified period.
+    # if to is >= the intervals end, then include the current interval
     def intervals(from = nil, to = nil)
-      return [] if @intervals.length == 0
-      return @intervals.dup if from.nil? && to.nil?
-
-      from ||= @intervals.first.first
-      to   ||= @intervals.last.last
+      return [] unless intervals_beginning
+      
+      from ||= intervals_beginning
+      to   ||= intervals_end
       intervals = []
     
       @intervals.each do |start, stop|
@@ -221,6 +229,11 @@ DATA
         end
         intervals.push([start, stop])
       end
+      
+      if @started_at && to >= intervals_end
+        intervals.push([@started_at, Time.now])
+      end
+      
       intervals
     end
     
@@ -232,7 +245,7 @@ DATA
     # return total for a particular day
     def day_total(day = nil)
       day = day.to_time rescue Time.now
-      total day.beginning_of_day, day.beginning_of_day + 24.hours
+      total day.beginning_of_day, day.beginning_of_next_day
     end
     
     # return total for a particular hour
@@ -291,7 +304,7 @@ DATA
       return "\nNo session data exists\n" if timer.intervals.length == 0
       from ||= timer.intervals.first.first
       to   ||= Time.now
-      from, to = from.beginning_of_day, to.beginning_of_day + 24.hours
+      from, to = from.beginning_of_day, to.beginning_of_next_day
       day, days = from, []
       while day < to
         days << day_report(day, type) if timer.day_total(day) > 0
@@ -306,7 +319,7 @@ DATA
       File.open(Matewatch.data_dir + "/#{name}.yml", 'w+') {|f| f << to_yaml}
     end
     
-    # destory the yml file, first saving self to filename if specified
+    # destroy the yml file, first saving self to filename if specified
     def destroy(filename = nil)
       if filename
         File.open(Matewatch.data_dir + "/#{filename}.yml", 'w+') {|f| f << to_yaml}
@@ -347,7 +360,7 @@ DATA
     def day_session_report(day = nil)
       day = day.to_time rescue Time.now
       idx = 0
-      items = timer.intervals(day.beginning_of_day, day.beginning_of_day + 24.hours).collect do |start, stop|
+      items = timer.intervals(day.beginning_of_day, day.beginning_of_next_day).collect do |start, stop|
         sprintf "    %2d.  %s-%s  %s", idx+=1, start.strftime("%H:%M"), stop.strftime("%H:%M"), humanize(stop-start)
       end
       items.join("\n")
@@ -467,6 +480,12 @@ DATA
         @projects.find {|p| active_path =~ /^#{p.path}/}
       end
     end
+  end
+end
+
+class Time
+  def beginning_of_next_day
+    beginning_of_day + 24.hours
   end
 end
 
