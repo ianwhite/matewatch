@@ -9,110 +9,179 @@ rescue LoadError
   exit
 end
 
-module Matewatch
-  class<<self
-    def data_dir
-      File.expand_path("~/.matewatch")
-    end
-
-    def run
-      opts = GetoptLong.new(
-        [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
-        [ '--require-frontmost', '-r', GetoptLong::NO_ARGUMENT],
-        [ '--verbose', '-v', GetoptLong::NO_ARGUMENT ],
-        [ '--debug', GetoptLong::NO_ARGUMENT ],
-        [ '--hourly', GetoptLong::NO_ARGUMENT ],
-        [ '--session', GetoptLong::NO_ARGUMENT ],
-        [ '--from', '-f', GetoptLong::REQUIRED_ARGUMENT],
-        [ '--to', '-t', GetoptLong::REQUIRED_ARGUMENT],
-        [ '--day', '-d', GetoptLong::REQUIRED_ARGUMENT],
-        [ '--poll', GetoptLong::REQUIRED_ARGUMENT]
-      )
-
-      opts.each do |opt, arg|
-        case opt
-        when '--help'     then exit_with_msg(help_msg)
-        when '--require-frontmost' then @require_frontmost = true
-        when '--verbose'  then @verbose = true
-        when '--from'     then @from = Time.parse(arg)
-        when '--to'       then @to = Time.parse(arg)
-        when '--day'      then @day = Time.parse(arg)
-        when '--poll'     then @poll = arg.to_i
-        when '--hourly'   then @type = 'hourly'
-        when '--session'  then @type = 'session'
-        when '--debug'    then @debug = true
-        end
-      end
-
-      begin
-        @logger = Logger.new(@verbose)
-        @mw = Watcher.new :logger => @logger, :require_frontmost => @require_frontmost
-      
-        save_and_exit = lambda do
-          @logger.info "\nCleaning up"
-          @mw.shutdown          
-          exit
-        end
-        ['SIGUSR1', 'SIGUSR2', 'SIGTERM', 'SIGINT'].each {|sig| trap sig, save_and_exit}
+class Matewatch
+  DATA_DIR = File.expand_path("~/.matewatch")
+  START = 'USR1'
+  PAUSE = 'USR2'
   
-        case command = ARGV.shift
-        when 'start'
-          @mw.watch(@poll || 5)
+  # COMMANDS
+  module Commands
     
-        when 'report'
-          projects = (name = ARGV.shift) ? [@mw.project(name)] : @mw.projects
-          heading = "#{"#{@type} " if @type}report"
-          if @day
-            heading += " " + @day.strftime("%a %d/%b/%y")
-          else
-            heading += @from ? " " + @from.strftime(@from.strftime("%a %d/%b/%y")) : ""
-            heading += " => "
-            heading += @to ? @to.strftime(@from.strftime("%a %d/%b/%y")) : Time.now.strftime("%a %d/%b/%y")
-          end
-          projects.each do |project|
-            line = '=' * (project.name.length + heading.length + 2)
-            puts "\n#{line}\n#{project.name}: #{heading}\n#{line}\n"
-            puts @day ? project.day_report(@day, @type) : project.report(@from, @to, @type)
-            puts
-          end  
-                    
-        when 'list'
-          printf("\n     %-20s  %s\n\n", 'NAME', 'PATH')
-          idx = 0
-          @mw.projects.each{|p| printf(" %2d. %-20s  %s\n", idx += 1, p.name, p.path)}
-          puts
-    
-        when 'add'
-          usage = "Eh? matewatch add <name> <path> [<position>]"
-          @name = ARGV.shift || exit_with_msg(usage)
-          @path = ARGV.shift || exit_with_msg(usage)
-          @pos  = ARGV.first ? ARGV.shift.to_i : nil
-          project = @mw.add_project(@name, @path, @pos)
-          puts "project #{project.name} #{project.path} added"
-  
-        when 'remove'
-          @name = ARGV.shift || exit_with_msg("Eh? matewatch remove <name>")
-          project = @mw.remove_project(@name)
-          puts "project #{project.name} removed"
-  
-        when 'move'
-          usage = "Eh? matewatch move <name> <position>"
-          @name = ARGV.shift || exit_with_msg(usage)
-          @pos  = (ARGV.first ? ARGV.shift.to_i : nil) || exit_with_msg(usage)
-          project = @mw.move_project(@name, @pos)
-          puts "project #{project.name} moved"
-  
+    # starts server, or sends START to running server
+    def start
+      if pid
+        puts "matewatch is running (pid: #{pid}), sending START to it"
+        if system("kill -s #{START} #{pid}")
+          puts "matewatch #{pid} successfully started"
         else
-          puts help_msg       
+          puts "Couldn't start process #{pid}.  Perhaps matewatch isn't really running?"
+          puts "Try removing the pid file at:\n  #{DATA_DIR}/pid"
         end
-
-      rescue Exception => e
-        @debug ? (raise e) : exit_with_msg($!)
+      else
+        write_pid
+        @watcher.watch(@poll || 5)
       end
     end
+  
+    # send PAUSE to 
+    def pause
+      if pid
+        puts "matewatch is running (pid: #{pid}), sending PAUSE to it"
+        if system("kill -s #{PAUSE} #{pid}")
+          puts "matchwatch #{pid} successfully paused"
+        else
+          puts "Couldn't pause process #{pid}.  Perhaps matewatch isn't really running?"
+          puts "Try removing the pid file at:\n  #{DATA_DIR}/pid"
+        end
+      else
+        puts "matewatch is not running, start matewatch with 'matewatch start'"
+      end
+    end
+  
+    def report
+      projects = (name = @args.shift) ? [@watcher.project(name)] : @watcher.projects
+      heading = "#{"#{@type} " if @type}report"
+      if @day
+        heading += " " + @day.strftime("%a %d/%b/%y")
+      else
+        heading += @from ? " " + @from.strftime(@from.strftime("%a %d/%b/%y")) : ""
+        heading += " => "
+        heading += @to ? @to.strftime(@from.strftime("%a %d/%b/%y")) : Time.now.strftime("%a %d/%b/%y")
+      end
+      projects.each do |project|
+        line = '=' * (project.name.length + heading.length + 2)
+        puts "\n#{line}\n#{project.name}: #{heading}\n#{line}\n"
+        puts @day ? project.day_report(@day, @type) : project.report(@from, @to, @type)
+        puts
+      end
+    end
+  
+    def list
+      printf("\n     %-20s  %s\n\n", 'NAME', 'PATH')
+      idx = 0
+      @watcher.projects.each{|p| printf(" %2d. %-20s  %s\n", idx += 1, p.name, p.path)}
+      puts
+    end
+  
+    def add
+      usage = "Eh? matewatch add <name> <path> [<position>]"
+      @name = @args.shift || exit_with_msg(usage)
+      @path = @args.shift || exit_with_msg(usage)
+      @pos  = @args.first ? @args.shift.to_i : nil
+      project = @mw.add_project(@name, @path, @pos)
+      puts "project #{project.name} #{project.path} added"
+    end
 
-    def help_msg
-      <<-end_str
+    def remove
+      @name = @args.shift || exit_with_msg("Eh? matewatch remove <name>")
+      project = @mw.remove_project(@name)
+      puts "project #{project.name} removed"
+    end
+  
+    def move
+      usage = "Eh? matewatch move <name> <position>"
+      @name = @args.shift || exit_with_msg(usage)
+      @pos  = (@args.first ? @args.shift.to_i : nil) || exit_with_msg(usage)
+      project = @mw.move_project(@name, @pos)
+      puts "project #{project.name} moved"
+    end
+  end
+  
+  include Commands
+  
+  def self.data_dir
+    returning(Matewatch::DATA_DIR) {|dir| system("mkdir -p #{dir}")}
+  end
+    
+  def initialize(args)
+    @args = args
+    extract_options
+    setup
+    command = @args.shift
+    if Commands.instance_methods.include?(command)
+      send(command)
+    else
+      puts help_msg       
+    end
+  rescue Exception => e
+    @debug ? (raise e) : exit_with_msg($!)
+  end
+  
+protected
+  def extract_options
+    opts = GetoptLong.new(
+      [ '--help', '-h', GetoptLong::NO_ARGUMENT ],
+      [ '--require-frontmost', '-r', GetoptLong::NO_ARGUMENT],
+      [ '--verbose', '-v', GetoptLong::NO_ARGUMENT ],
+      [ '--debug', GetoptLong::NO_ARGUMENT ],
+      [ '--hourly', GetoptLong::NO_ARGUMENT ],
+      [ '--session', GetoptLong::NO_ARGUMENT ],
+      [ '--from', '-f', GetoptLong::REQUIRED_ARGUMENT],
+      [ '--to', '-t', GetoptLong::REQUIRED_ARGUMENT],
+      [ '--day', '-d', GetoptLong::REQUIRED_ARGUMENT],
+      [ '--poll', GetoptLong::REQUIRED_ARGUMENT]
+    )
+
+    opts.each do |opt, arg|
+      case opt
+      when '--help'     then exit_with_msg(help_msg)
+      when '--require-frontmost' then @require_frontmost = true
+      when '--verbose'  then @verbose = true
+      when '--from'     then @from = Time.parse(arg)
+      when '--to'       then @to = Time.parse(arg)
+      when '--day'      then @day = Time.parse(arg)
+      when '--poll'     then @poll = arg.to_i
+      when '--hourly'   then @type = 'hourly'
+      when '--session'  then @type = 'session'
+      when '--debug'    then @debug = true
+      end
+    end
+  end
+
+  def data_dir
+    self.class.data_dir
+  end
+  
+  def setup
+    @logger = Logger.new(@verbose)
+    @watcher = Watcher.new :logger => @logger, :require_frontmost => @require_frontmost
+
+    save_and_exit = lambda do
+      @logger.info "\nCleaning up"
+      @watcher.shutdown          
+      exit
+    end
+  
+    trap 'SIGTERM', save_and_exit
+    trap 'SIGINT', save_and_exit
+
+    trap PAUSE, lambda{ @watcher.pause }
+    trap START, lambda{ @watcher.start }
+  end
+
+  def pid
+    unless @pid
+      pid = File.read("#{Matewatch.data_dir}/pid") rescue nil
+      pis = pid.to_i unless pid.nil?
+    end
+  end
+
+  def write_pid
+    File.open("#{data_dir}/pid", 'w+') {|f| f << Process.pid }
+  end
+
+  def help_msg
+    <<-end_str
   
 matewatch watches textmate and logs how long you are working on files in spec-
 ified directories
@@ -128,7 +197,7 @@ USAGE
     --poll=<n>              -p <n>        poll every (n) seconds
     --require-frontmost     -r            require that textmate be frontmost
                                           application to log time data
-    
+  
   matewatch report [<name>]
     Show brief report of hours/minutes per day
 
@@ -150,6 +219,10 @@ USAGE
   matewatch move <name> <position>
     Move a project up or down the list
 
+  matewatch pause
+    Will pause the current matewatcher, use matewatch start to start it
+    again
+
 DATA
 
   If you want to get at the session data for your projects, you'll find them
@@ -159,13 +232,12 @@ DATA
 
     by Argument from Design (c) 2007 <http://www.ardes.com> (MIT License)
   
-    end_str
-    end
+  end_str
+  end
 
-    def exit_with_msg(str)
-      puts str
-      exit
-    end
+  def exit_with_msg(str)
+    puts str
+    exit
   end
   
   class Logger
@@ -416,11 +488,19 @@ DATA
       end
     end
   
+    def pause
+      load_projects
+      @projects.each(&:stop)
+      logger.info("=== matewatch PAUSED at #{Time.now}")
+      @paused = true
+    end
+    
+    def start
+      @paused = false
+      logger.info("=== matewatch STARTED at #{Time.now}")
+    end
+    
     def watch(poll = 1)
-      pid = File.read("#{Matewatch.data_dir}/pid") rescue nil
-      raise "Another matewatch appears to be running (pid: #{pid})\nif not then remove #{Matewatch.data_dir}/pid." if pid
-      File.open("#{Matewatch.data_dir}/pid", 'w+') {|f| f << Process.pid }
-      
       poll = 1 if poll.to_i < 1
       i, textmate_gone = 0, false
       
@@ -428,6 +508,7 @@ DATA
       logger.info "=== press CTRL-c, or type kill #{Process.pid}, to shutdown\n"
       
       loop do
+        next if @paused
         load_projects
         
         begin
@@ -489,4 +570,4 @@ class Time
   end
 end
 
-Matewatch.run
+Matewatch.new(ARGV)
