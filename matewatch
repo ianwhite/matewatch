@@ -4,8 +4,9 @@ begin
   require 'rbosa'
   require 'getoptlong'
   require 'active_support'
-rescue
-  puts "matewatch requires rubygems, rubyosa, and activesupport"
+rescue LoadError
+  puts "matewatch requires gems: rubyosa, and activesupport"
+  exit
 end
 
 module Matewatch
@@ -231,7 +232,7 @@ DATA
     # return total for a particular day
     def day_total(day = nil)
       day = day.to_time rescue Time.now
-      total day.beginning_of_day, day.end_of_day + 1
+      total day.beginning_of_day, day.beginning_of_day + 24.hours
     end
     
     # return total for a particular hour
@@ -276,7 +277,7 @@ DATA
     
     def day_report(day = nil, type = nil)
       day = day.to_time rescue Time.now
-      out = " - #{day.strftime('%d/%b/%y')}  #{humanize(timer.day_total(day))}"
+      out = " - #{day.strftime('%d/%b/%y')}: #{humanize(timer.day_total(day))}"
       if type == 'hourly'
         out + "\n" + day_hourly_report(day) + "\n"
       elsif type == 'session'
@@ -290,7 +291,7 @@ DATA
       return "\nNo session data exists\n" if timer.intervals.length == 0
       from ||= timer.intervals.first.first
       to   ||= Time.now
-      from, to = from.beginning_of_day, to.end_of_day
+      from, to = from.beginning_of_day, to.beginning_of_day + 24.hours
       day, days = from, []
       while day < to
         days << day_report(day, type) if timer.day_total(day) > 0
@@ -319,7 +320,7 @@ DATA
     end
     
   protected
-    # returns nil if there is no time - so you can decide not to printor write '0 minutes' or whatever
+    # returns nil if there is no time - so you can decide not to print or write '0 minutes' or whatever
     def humanize(seconds)
       seconds = seconds.to_i
       hours, mins, secs = seconds / 1.hour, (seconds % 1.hour) / 1.minute, seconds%60
@@ -329,15 +330,15 @@ DATA
     def humanize_words(seconds, nearest = 1)
       mins = seconds.to_i / 1.minute
       mins += (nearest - mins%nearest) unless mins%nearest == 0
-      hours, mins = mins/1.hour, mins%1.hour
-      "#{hours} hour#{'s' if hours != 1}, #{mins} minute#{'s' if mins != 1} (in #{nearest} min blocks)"
+      hours, mins = mins/60, mins%60
+      "#{hours} hour#{'s' if hours != 1}, #{mins} minute#{'s' if mins != 1} (#{nearest} min chunks)"
     end
     
     def day_hourly_report(day = nil)
       hours = []
       (0..23).to_a.each do |hour|
         if (ht = timer.hour_total(hour, day)) > 0
-          hours << sprintf("   %2d00-%02d00  %s", hour, (hour+1)%24, humanize(ht))
+          hours << sprintf("    %2d00-%02d00  %s", hour, (hour+1)%24, humanize(ht))
         end
       end
       hours.join("\n")
@@ -346,8 +347,8 @@ DATA
     def day_session_report(day = nil)
       day = day.to_time rescue Time.now
       idx = 0
-      items = timer.intervals(day.beginning_of_day, day.end_of_day + 1).collect do |start, stop|
-        sprintf "   %2d.  %s-%s  %s", idx+=1, start.strftime("%H:%M"), stop.strftime("%H:%M"), humanize(stop-start)
+      items = timer.intervals(day.beginning_of_day, day.beginning_of_day + 24.hours).collect do |start, stop|
+        sprintf "    %2d.  %s-%s  %s", idx+=1, start.strftime("%H:%M"), stop.strftime("%H:%M"), humanize(stop-start)
       end
       items.join("\n")
     end
