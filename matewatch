@@ -158,13 +158,6 @@ protected
     @logger = Logger.new(@verbose)
     @watcher = Watcher.new :logger => @logger, :require_frontmost => @require_frontmost
 
-    if File.exist?(SLEEPWATCHER)
-      @sleepwatcher = SLEEPWATCHER
-    else
-      puts "\nIf you install sleepwatcher http://www.bernhard-baehr.de/sleepwatcher_2.0.4.dmg"
-      puts "then matewatch will pause timers when going to sleep\n\n"
-    end
-    
     save_and_exit = lambda do
       @logger.info "\nCleaning up"
       @watcher.shutdown
@@ -180,11 +173,14 @@ protected
   end
 
   def sleepwatch
-    if @sleepwatcher
+    if File.exist?(SLEEPWATCHER)
       @sleepwatcher_pid = Process.fork do
-        @logger.info "\nsleepwacthing: #{@sleepwatcher} -s 'kill -s #{PAUSE} #{pid}' -w 'kill -w #{START} #{pid}'\n\n"
-        system "#{@sleepwatcher} -s 'kill -s #{PAUSE} #{pid}' -w 'kill -s #{START} #{pid}'"
+        @logger.info "\nsleepwatching matewatch\n\n"
+        system "#{SLEEPWATCHER} -s 'kill -s #{PAUSE} #{pid}' -w 'kill -s #{START} #{pid}'"
       end
+    else
+      puts "\nIf you install sleepwatcher http://www.bernhard-baehr.de/sleepwatcher_2.0.4.dmg"
+      puts "then matewatch will pause timers when going to sleep\n\n"
     end
   end
   
