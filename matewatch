@@ -523,26 +523,26 @@ DATA
       logger.info "=== press CTRL-c, or type kill #{Process.pid}, to shutdown\n"
       
       loop do
-        next if @paused
-        load_projects
+        unless @paused
+          load_projects
         
-        begin
-          raise 'tm went away' if @require_frontmost && !@textmate.frontmost?
-          active = find_active_project
-          logger.info "+++ Textmate active at #{Time.now}" if textmate_gone
-          textmate_gone = false
-        rescue RuntimeError
-          logger.info "--- Textmate inactive at #{Time.now}" unless textmate_gone
-          textmate_gone = true
-        end
+          begin
+            raise 'tm went away' if @require_frontmost && !@textmate.frontmost?
+            active = find_active_project
+            logger.info "+++ Textmate active at #{Time.now}" if textmate_gone
+            textmate_gone = false
+          rescue RuntimeError
+            logger.info "--- Textmate inactive at #{Time.now}" unless textmate_gone
+            textmate_gone = true
+          end
       
-        to_stop = @projects
-        if !textmate_gone && active
-          to_stop = @projects - [active]
-          active.start
+          to_stop = @projects
+          if !textmate_gone && active
+            to_stop = @projects - [active]
+            active.start
+          end
+          to_stop.each(&:stop)
         end
-        to_stop.each(&:stop)
-        
         sleep(poll)
       end
     end
