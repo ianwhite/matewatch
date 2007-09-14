@@ -22,7 +22,7 @@
 			<key>CleanCommands</key>
 			<string>rlogin;telnet;ssh;slogin</string>
 			<key>Columns</key>
-			<string>60</string>
+			<string>104</string>
 			<key>CursorShape</key>
 			<string>0</string>
 			<key>CustomTitle</key>
@@ -42,7 +42,7 @@
 			<key>ExecutionString</key>
 			<string>matewatch start -v</string>
 			<key>FontAntialiasing</key>
-			<string>YES</string>
+			<string>NO</string>
 			<key>FontHeightSpacing</key>
 			<string>1</string>
 			<key>FontWidthSpacing</key>
@@ -165,7 +165,7 @@
 			<key>NSFixedPitchFont</key>
 			<string>Monaco</string>
 			<key>NSFixedPitchFontSize</key>
-			<real>11</real>
+			<real>9</real>
 			<key>OptionClickToMoveCursor</key>
 			<string>YES</string>
 			<key>PadBottom</key>
@@ -179,7 +179,7 @@
 			<key>RewrapOnResize</key>
 			<string>YES</string>
 			<key>Rows</key>
-			<string>10</string>
+			<string>15</string>
 			<key>SaveLines</key>
 			<string>10000</string>
 			<key>ScrollRegionCompat</key>
@@ -201,9 +201,9 @@
 			<key>TermCapString</key>
 			<string>xterm-color</string>
 			<key>TerminalOpaqueness</key>
-			<real>1</real>
+			<real>0.84166663885116577</real>
 			<key>TextColors</key>
-			<string>0.000 0.000 0.000 0.827 1.000 0.513 0.000 0.000 0.000 0.000 0.000 0.000 0.827 1.000 0.513 0.000 0.000 0.000 0.667 0.667 0.667 0.333 0.333 0.333 </string>
+			<string>1.000 1.000 1.000 0.000 0.000 1.000 1.000 1.000 1.000 1.000 1.000 1.000 0.000 0.000 1.000 1.000 1.000 1.000 0.667 0.667 0.667 1.000 1.000 1.000 </string>
 			<key>TitleBits</key>
 			<string>96</string>
 			<key>Translate</key>
@@ -213,9 +213,9 @@
 			<key>VisualBell</key>
 			<string>NO</string>
 			<key>WinLocULY</key>
-			<string>183</string>
+			<string>211</string>
 			<key>WinLocX</key>
-			<string>4</string>
+			<string>1</string>
 			<key>WinLocY</key>
 			<string>0</string>
 			<key>WindowCloseAction</key>
